@@ -7,6 +7,8 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 
+#define BUFSZ 64
+
 void logexit(const char *str)
 {
 	if(errno) perror(str);
@@ -14,52 +16,63 @@ void logexit(const char *str)
 	exit(EXIT_FAILURE);
 }
 
-void int2Char(int value, char *out)
-{
-}
-
 int main(int argc, char **argv)
 {
-	char buffer[4];
-	char ch_counter[4];
-	int counter;
-
-	int s = socket(AF_INET, SOCK_STREAM, 0);
-	if (s == -1)
-		logexit("socket");
-
-	struct sockaddr_in clt_addr;
-	struct sockaddr_in serv_addr = {
+	uint32_t counter = 0, tmp = 0;
+	int sock, newsock, addrlen, nrecv;
+	char buffer[BUFSZ], rcv[BUFSZ];
+	struct sockaddr_in clt;
+	struct sockaddr_in srv = {
 		.sin_family = AF_INET,
 		.sin_port = htons(51515),
 		.sin_addr.s_addr = htonl(INADDR_LOOPBACK)
 	};
 
-	if (bind(s, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0)
+	sock = socket(AF_INET, SOCK_STREAM, 0);
+	if (sock == -1)
+		logexit("socket");
+
+	if (bind(sock, (struct sockaddr *) &srv, sizeof(srv)) < 0)
 		logexit("binding");
 
-	listen(s, SOMAXCONN);
-	int clt_addr_len = sizeof(clt_addr);
-	int new_s = accept(s, (struct sockaddr *) &clt_addr, &clt_addr_len);
+	while (1) {
+		listen(sock, 1);
 
-	if (new_s == -1)
-		logexit("accepts");
+		addrlen = sizeof(clt);
+		newsock = accept(sock, (struct sockaddr *) &clt, &addrlen);
+		if (newsock == -1)
+			logexit("accept");
 
-	fd_set fdset;
-	FD_SET(new_s, &fdset);	
-	struct timeval t = { .tv_sec = 1 }; // 1s
-	setsockopt(new_s,SOL_SOCKET,SO_RCVTIMEO,(struct timeval *)&t,sizeof(struct timeval));
-	
-	int n = recv(new_s,buffer,1,0);
+		fd_set fdset;
+		FD_SET(newsock, &fdset);	
+		struct timeval t = { .tv_sec = 1 }; // 1s
+		setsockopt(newsock,SOL_SOCKET,SO_RCVTIMEO,(struct timeval *)&t,sizeof(struct timeval));
 
-	if (n > 0)
-		fprintf(stdout, "I've received %c\n", buffer[0]);
+		memset(buffer, 0, sizeof(buffer));
 
-	send(new_s,buffer,3,0);
-	n = recv(new_s,buffer,3,0);
+		if (1 != recv(newsock, buffer, 1, MSG_WAITALL))
+			logexit("recv");
 
-	close(new_s);
-	close(s);
+		if (buffer[0] == '+')
+			tmp = (counter + 1) % 1000;
+		else if (buffer[0] == '-')
+			tmp = (counter - 1) % 1000;
+		else
+			logexit("invalid value");
+
+		uint32_t value = htonl(tmp);
+		send(newsock, &value, 4, 0);
+
+		if (3 != recv(newsock, rcv, 3, MSG_WAITALL))
+			logexit("recv");
+
+		snprintf(buffer, BUFSZ, "%03d", tmp);
+		if (memcmp(buffer, rcv, 3) == 0)
+			counter = tmp;
+
+		close(newsock);
+	}
+	close(sock);
 
 	exit(EXIT_SUCCESS);
 }
