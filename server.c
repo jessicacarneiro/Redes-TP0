@@ -18,57 +18,62 @@ void logexit(const char *str)
 
 int main(int argc, char **argv)
 {
-	uint32_t counter = 0, tmp = 0;
-	int sock, newsock, addrlen, nrecv;
-	char buffer[BUFSZ], rcv[BUFSZ];
-	struct sockaddr_in clt;
-	struct sockaddr_in srv = {
+	uint32_t counter = 0;
+	char buffer[BUFSZ];
+	struct sockaddr_in clt, srv = {
 		.sin_family = AF_INET,
 		.sin_port = htons(51515),
 		.sin_addr.s_addr = htonl(INADDR_LOOPBACK)
 	};
 
-	sock = socket(AF_INET, SOCK_STREAM, 0);
-	if (sock == -1)
-		logexit("socket");
+	// Creating socket and binding
+	int sock = socket(AF_INET, SOCK_STREAM, 0);
+	if (sock == -1) logexit("socket");
+	if (bind(sock, (struct sockaddr *) &srv, sizeof(srv)) < 0) logexit("binding");
 
-	if (bind(sock, (struct sockaddr *) &srv, sizeof(srv)) < 0)
-		logexit("binding");
-
+	// Forever looping. Waiting for clients.
 	while (1) {
+		int addrlen = sizeof(clt);
 		listen(sock, 1);
 
-		addrlen = sizeof(clt);
-		newsock = accept(sock, (struct sockaddr *) &clt, &addrlen);
-		if (newsock == -1)
-			logexit("accept");
+		// New client. Accepting.
+		int newsock = accept(sock, (struct sockaddr *) &clt, &addrlen);
+		if (newsock == -1) logexit("accept");
 
+		// Setting timer for 1s.
 		fd_set fdset;
 		FD_SET(newsock, &fdset);	
-		struct timeval t = { .tv_sec = 1 }; // 1s
+		struct timeval t = { .tv_sec = 1 };
 		setsockopt(newsock,SOL_SOCKET,SO_RCVTIMEO,(struct timeval *)&t,sizeof(struct timeval));
 
-		memset(buffer, 0, sizeof(buffer));
-
-		if (1 != recv(newsock, buffer, 1, MSG_WAITALL))
-			logexit("recv");
-
+		// Receiving new data
+		if (1 != recv(newsock, buffer, 1, MSG_WAITALL)) logexit("recv");
+		
+		int tmp = (int)counter;
 		if (buffer[0] == '+')
-			tmp = (counter + 1) % 1000;
-		else if (buffer[0] == '-')
-			tmp = (counter - 1) % 1000;
+			tmp++;
+		else if (buffer[0] == '-') {
+			tmp--;
+			
+			if (tmp < 0) tmp += 1000;
+		}
 		else
 			logexit("invalid value");
-
+		tmp %= 1000;
+		
+		// Sending counter value to confirm.
 		uint32_t value = htonl(tmp);
 		send(newsock, &value, 4, 0);
 
-		if (3 != recv(newsock, rcv, 3, MSG_WAITALL))
-			logexit("recv");
+		// Receiving counter confirmation.
+		if (3 != recv(newsock, buffer, 3, MSG_WAITALL)) logexit("recv");
 
-		snprintf(buffer, BUFSZ, "%03d", tmp);
-		if (memcmp(buffer, rcv, 3) == 0)
+		// Checking value received and printing.
+		value = atoi(buffer);
+		if (tmp == value) {
 			counter = tmp;
+			fprintf(stdout, "%d\n", counter);
+		}
 
 		close(newsock);
 	}
@@ -76,4 +81,3 @@ int main(int argc, char **argv)
 
 	exit(EXIT_SUCCESS);
 }
-
