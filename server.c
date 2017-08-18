@@ -8,6 +8,7 @@
 #include <arpa/inet.h>
 
 #define BUFSZ 64
+#define MOD 1000
 
 void logexit(const char *str)
 {
@@ -40,41 +41,48 @@ int main(int argc, char **argv)
 		int newsock = accept(sock, (struct sockaddr *) &clt, &addrlen);
 		if (newsock == -1) logexit("accept");
 
-		// Setting timer for 1s.
-		fd_set fdset;
-		FD_SET(newsock, &fdset);	
-		struct timeval t = { .tv_sec = 1 };
-		setsockopt(newsock,SOL_SOCKET,SO_RCVTIMEO,(struct timeval *)&t,sizeof(struct timeval));
-
 		// Receiving new data
 		if (1 != recv(newsock, buffer, 1, MSG_WAITALL)) logexit("recv");
-		
+
 		int tmp = (int)counter;
 		if (buffer[0] == '+')
 			tmp++;
 		else if (buffer[0] == '-') {
 			tmp--;
-			
+
 			if (tmp < 0) tmp += 1000;
 		}
 		else
 			logexit("invalid value");
-		tmp %= 1000;
-		
+		tmp %= MOD;
+
 		// Sending counter value to confirm.
 		uint32_t value = htonl(tmp);
 		send(newsock, &value, 4, 0);
 
-		// Receiving counter confirmation.
-		if (3 != recv(newsock, buffer, 3, MSG_WAITALL)) logexit("recv");
+		// Setting timer for 1s0ms.
+		fd_set fdset;
+		FD_ZERO(&fdset);
+		FD_SET(newsock, &fdset);	
+		struct timeval t = { .tv_sec = 1, .tv_usec = 0 };
+		setsockopt(newsock, SOL_SOCKET, SO_RCVTIMEO, 
+				(struct timeval *)&t, sizeof(struct timeval));
 
-		// Checking value received and printing.
-		value = atoi(buffer);
-		if (tmp == value) {
-			counter = tmp;
-			fprintf(stdout, "%d\n", counter);
+		if (0 == select(newsock + 1, &fdset, NULL, NULL, &t)) {
+			fprintf(stdout, "T\n");
 		}
+		else  {
+			// Receiving counter confirmation.
+			if (3 != recv(newsock, buffer, 3, MSG_WAITALL)) logexit("recv");
 
+			// Checking value received and printing.
+			value = atoi(buffer);
+			if (tmp == value) {
+				counter = tmp;
+				fprintf(stdout, "%d\n", counter);
+			}
+
+		}
 		close(newsock);
 	}
 	close(sock);
